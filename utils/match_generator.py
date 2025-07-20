@@ -79,6 +79,9 @@ def generate_matches(
             
         # 組み合わせ生成を試行
         match_found = False
+        best_combination = None
+        best_score = float('-inf')
+        
         for attempt in range(MAX_COMBINATION_ATTEMPTS):
             # プレイヤーを優先度でソート
             # 1. 前回の試合に出ていない人を優先
@@ -128,9 +131,39 @@ def generate_matches(
             if len(team2_players) != 2:
                 continue
             
-            # 過去の組み合わせをチェック（完了した試合 + 今回生成した試合）
-            if is_combination_used(team1_players, team2_players, historical_combinations):
-                continue
+            # 組み合わせの評価スコアを計算
+            combination_score = 0
+            
+            # 1. 過去の組み合わせ回避（重み: 1000点）
+            if not is_combination_used(team1_players, team2_players, historical_combinations):
+                combination_score += 1000
+            
+            # 2. 前回試合回避（重み: 500点）
+            non_last_match_players = 0
+            for player in team1_players + team2_players:
+                if player not in last_match_players:
+                    non_last_match_players += 1
+            combination_score += non_last_match_players * 500
+            
+            # 3. 試合数均等化（重み: 100点）
+            total_matches = sum(player_match_counts[player] for player in team1_players + team2_players)
+            combination_score += (8 - total_matches) * 100  # 試合数が少ないほど高スコア
+            
+            # 4. スキルレベルマッチング（重み: 10点）
+            if skill_matching:
+                team1_level = sum(players[player].level for player in team1_players)
+                team2_level = sum(players[player].level for player in team2_players)
+                level_diff = abs(team1_level - team2_level)
+                combination_score += (10 - level_diff) * 10  # レベル差が小さいほど高スコア
+            
+            # より良い組み合わせが見つかった場合、記録
+            if combination_score > best_score:
+                best_score = combination_score
+                best_combination = (team1_players.copy(), team2_players.copy())
+        
+        # 最良の組み合わせを使用
+        if best_combination:
+            team1_players, team2_players = best_combination
             
             # 新しい組み合わせが見つかった
             match = Match(
@@ -158,7 +191,6 @@ def generate_matches(
             last_match_players = set(team1_players + team2_players)
             
             match_found = True
-            break
         
         # 組み合わせが見つからない場合は制約を緩める
         if not match_found and len(available_players) >= MIN_PLAYERS_FOR_MATCH:
@@ -167,10 +199,6 @@ def generate_matches(
             
             team1_players = temp_players[:2]
             team2_players = temp_players[2:4] if len(temp_players) >= 4 else temp_players[:2]
-            
-            # 過去の組み合わせをチェック
-            if is_combination_used(team1_players, team2_players, historical_combinations):
-                continue
             
             match = Match(
                 team1_players, 
