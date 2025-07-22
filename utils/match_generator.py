@@ -25,7 +25,7 @@ def get_historical_combinations(matches: List[Match]) -> Set[Tuple]:
     return combinations
 
 def is_combination_used(team1: List[str], team2: List[str], historical_combinations: Set[Tuple]) -> bool:
-    """組み合わせが過去に使用されているかチェック"""
+    """組み合わせが過去に使用されているかチェック（絶対的なブロックではなく、優先度の判定用）"""
     team1_sorted = tuple(sorted(team1))
     team2_sorted = tuple(sorted(team2))
     match_combination = tuple(sorted([team1_sorted, team2_sorted]))
@@ -133,23 +133,41 @@ def generate_matches(
             
             # 組み合わせの評価スコアを計算
             combination_score = 0
-            
+
             # 1. 過去の組み合わせ回避（重み: 1000点）
             if not is_combination_used(team1_players, team2_players, historical_combinations):
                 combination_score += 1000
+
+            # 2. 2人組ペアの重複回避（重み: 800点）
+            duplicate_pairs = 0
+            for player1 in team1_players:
+                for player2 in team1_players:
+                    if player1 != player2:
+                        pair = tuple(sorted([player1, player2]))
+                        if pair in historical_combinations:
+                            duplicate_pairs += 1
             
-            # 2. 前回試合回避（重み: 500点）
+            for player1 in team2_players:
+                for player2 in team2_players:
+                    if player1 != player2:
+                        pair = tuple(sorted([player1, player2]))
+                        if pair in historical_combinations:
+                            duplicate_pairs += 1
+            
+            combination_score += (8 - duplicate_pairs) * 800  # 重複ペアが少ないほど高スコア
+
+            # 3. 前回試合回避（重み: 500点）
             non_last_match_players = 0
             for player in team1_players + team2_players:
                 if player not in last_match_players:
                     non_last_match_players += 1
             combination_score += non_last_match_players * 500
-            
-            # 3. 試合数均等化（重み: 100点）
+
+            # 4. 試合数均等化（重み: 100点）
             total_matches = sum(player_match_counts[player] for player in team1_players + team2_players)
             combination_score += (8 - total_matches) * 100  # 試合数が少ないほど高スコア
-            
-            # 4. スキルレベルマッチング（重み: 10点）
+
+            # 5. スキルレベルマッチング（重み: 10点）
             if skill_matching:
                 team1_level = sum(players[player].level for player in team1_players)
                 team2_level = sum(players[player].level for player in team2_players)
@@ -182,6 +200,19 @@ def generate_matches(
             historical_combinations.add(team1_sorted)
             historical_combinations.add(team2_sorted)
             historical_combinations.add(match_combination)
+            
+            # 2人組の組み合わせも記録（部分的な重複を避けるため）
+            for player1 in team1_players:
+                for player2 in team1_players:
+                    if player1 != player2:
+                        pair = tuple(sorted([player1, player2]))
+                        historical_combinations.add(pair)
+            
+            for player1 in team2_players:
+                for player2 in team2_players:
+                    if player1 != player2:
+                        pair = tuple(sorted([player1, player2]))
+                        historical_combinations.add(pair)
             
             # プレイヤーの試合数を更新
             for player in team1_players + team2_players:
@@ -216,6 +247,19 @@ def generate_matches(
             historical_combinations.add(team1_sorted)
             historical_combinations.add(team2_sorted)
             historical_combinations.add(match_combination)
+            
+            # 2人組の組み合わせも記録（部分的な重複を避けるため）
+            for player1 in team1_players:
+                for player2 in team1_players:
+                    if player1 != player2:
+                        pair = tuple(sorted([player1, player2]))
+                        historical_combinations.add(pair)
+            
+            for player1 in team2_players:
+                for player2 in team2_players:
+                    if player1 != player2:
+                        pair = tuple(sorted([player1, player2]))
+                        historical_combinations.add(pair)
             
             # プレイヤーの試合数を更新
             for player in team1_players + team2_players:
