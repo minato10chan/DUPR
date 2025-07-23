@@ -1,233 +1,246 @@
 import streamlit as st
-import pandas as pd
-from models.player import Player
 from services.player_service import PlayerService
-from services.match_service import MatchService
-from utils.data_manager import load_data, save_data
-from config.settings import APP_TITLE
 
-# ページ設定
-st.set_page_config(
-    page_title="ユーザー管理 - " + APP_TITLE,
-    page_icon="👥",
-    layout="wide"
-)
-
-# セッション状態の初期化
-if 'players' not in st.session_state:
-    st.session_state.players = {}
-if 'matches' not in st.session_state:
-    st.session_state.matches = []
-
-# データ読み込み
-if not st.session_state.players and not st.session_state.matches:
-    loaded_players, loaded_matches = load_data()
-    if loaded_players:
-        st.session_state.players = loaded_players
-    if loaded_matches:
-        st.session_state.matches = loaded_matches
-
-# サービスインスタンスの初期化
-player_service = PlayerService(st.session_state.players, st.session_state.matches)
-
-def main():
-    st.title("👥 ユーザー管理")
-    st.markdown("参加者の登録、編集、削除を行います。")
+def show_user_management():
+    """ユーザー管理ページを表示"""
+    st.title("👥 プレイヤー管理")
     
-    # メインページへのリンク
-    if st.button("🏠 メインページに戻る", type="secondary", use_container_width=True):
-        st.switch_page("app.py")
+    player_service = PlayerService()
     
-    st.divider()
+    # プレイヤー追加タブ
+    add_tab1, add_tab2 = st.tabs(["👤 個別追加", "📋 一括追加"])
     
-    # ユーザー追加セクション
-    st.header("➕ 新しいユーザー追加")
-    
-    # タブで個別追加と一括追加を分ける
-    tab1, tab2 = st.tabs(["個別追加", "JSON一括追加"])
-    
-    with tab1:
-        col1, col2, col3 = st.columns([2, 1, 1])
-        
-        with col1:
-            new_user_name = st.text_input("ユーザー名", placeholder="新しいユーザー名を入力", key="single_name")
-        with col2:
-            new_user_level = st.selectbox("レベル", options=[1, 2, 3, 4, 5], index=2, key="single_level")
-        with col3:
-            if st.button("追加", type="primary", use_container_width=True, key="single_add") and new_user_name.strip():
-                if player_service.add_player(new_user_name.strip(), new_user_level):
-                    st.success(f"✅ {new_user_name}を追加しました")
+    with add_tab1:
+        # 新しいプレイヤーの追加（個別）
+        st.subheader("新しいプレイヤーを追加")
+        with st.form("add_player_form"):
+            new_player_name = st.text_input(
+                "プレイヤー名", 
+                placeholder="プレイヤー名を入力してください",
+                key="new_player_name"
+            )
+            submit_add = st.form_submit_button("➕ プレイヤーを追加", use_container_width=True)
+            
+            if submit_add and new_player_name.strip():
+                try:
+                    player_service.create_player(new_player_name.strip())
+                    st.success(f"プレイヤー「{new_player_name}」を追加しました！")
                     st.rerun()
-                else:
-                    st.error("❌ ユーザー名が既に存在します")
+                except ValueError as e:
+                    st.error(str(e))
+            elif submit_add:
+                st.error("プレイヤー名を入力してください")
     
-    with tab2:
-        st.markdown("**JSON形式でユーザーを一括追加**")
-        st.markdown("例: `{\"Name\":[\"田井木の実/60代\",\"鈴木郁子/60代\"]}`")
+    with add_tab2:
+        # JSON一括登録
+        st.subheader("📋 JSON一括登録")
+        st.write("複数のプレイヤーを一度に登録できます。")
         
-        # ファイルアップロード
-        uploaded_file = st.file_uploader(
-            "JSONファイルをアップロード",
-            type=['json'],
-            help="JSONファイルを選択してください"
+        # 使用例の表示
+        with st.expander("📝 JSONフォーマット例", expanded=False):
+            st.code('''
+{
+  "Name": [
+    "委員長代理/40代",
+    "高橋理事長/40代", 
+    "今本あけみ/50代",
+    "うちだなおき/30代",
+    "内田美由紀/30代",
+    "森田亜希子/50代",
+    "タケウチカツミ/50代"
+  ]
+}
+            ''', language='json')
+        
+        # JSON入力
+        json_input = st.text_area(
+            "JSONデータを入力してください",
+            placeholder='{"Name": ["プレイヤー1", "プレイヤー2", "プレイヤー3"]}',
+            height=200,
+            key="json_input"
         )
         
-        if uploaded_file is not None:
-            try:
-                json_data = uploaded_file.read().decode('utf-8')
-                st.text_area("アップロードされたJSON", json_data, height=100, disabled=True)
-                json_input = json_data
-            except Exception as e:
-                st.error(f"❌ ファイル読み込みエラー: {str(e)}")
-                json_input = ""
-        else:
-            json_input = st.text_area(
-                "JSONデータを入力",
-                placeholder='{"Name":["ユーザー名1","ユーザー名2","ユーザー名3"]}',
-                height=150
-            )
+        # 自動参加オプション
+        auto_participate = st.checkbox(
+            "✅ 追加時に自動で参加者にする", 
+            value=True,
+            help="ONにすると、追加されたプレイヤーが自動で参加者に設定されます"
+        )
         
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            default_level = st.selectbox("デフォルトレベル", options=[1, 2, 3, 4, 5], index=2, key="json_level")
-        with col2:
-            if st.button("JSONから追加", type="primary", use_container_width=True, key="json_add") and json_input.strip():
+        # 一括登録ボタン
+        if st.button("📋 一括登録", use_container_width=True, type="primary"):
+            if json_input.strip():
                 try:
                     import json
+                    
+                    # JSONパース
                     data = json.loads(json_input)
                     
-                    if "Name" in data and isinstance(data["Name"], list):
-                        added_count = 0
-                        skipped_count = 0
-                        
-                        for user_name in data["Name"]:
-                            if isinstance(user_name, str) and user_name.strip():
-                                if player_service.add_player(user_name.strip(), default_level):
-                                    added_count += 1
-                                else:
-                                    skipped_count += 1
-                        
-                        if added_count > 0:
-                            st.success(f"✅ {added_count}人のユーザーを追加しました")
-                            if skipped_count > 0:
-                                st.warning(f"⚠️ {skipped_count}人は既に存在するためスキップしました")
-                            st.rerun()
-                        else:
-                            st.error("❌ 追加されたユーザーがありません")
+                    # "Name"キーの存在確認
+                    if "Name" not in data:
+                        st.error("❌ JSONに'Name'キーが見つかりません")
+                    elif not isinstance(data["Name"], list):
+                        st.error("❌ 'Name'の値はリスト形式である必要があります")
                     else:
-                        st.error("❌ JSONの形式が正しくありません。'Name'キーと配列が必要です。")
+                        names = data["Name"]
                         
-                except json.JSONDecodeError:
-                    st.error("❌ JSONの形式が正しくありません")
+                        if not names:
+                            st.error("❌ プレイヤー名のリストが空です")
+                        else:
+                            # プレイヤー追加処理
+                            success_count = 0
+                            error_count = 0
+                            duplicate_count = 0
+                            errors = []
+                            added_players = []
+                            
+                            for name in names:
+                                name = str(name).strip()
+                                if name:
+                                    try:
+                                        new_player = player_service.create_player(name)
+                                        added_players.append(new_player)
+                                        success_count += 1
+                                    except ValueError as e:
+                                        if "既に存在" in str(e):
+                                            duplicate_count += 1
+                                            # 既存プレイヤーも自動参加に含める場合
+                                            if auto_participate:
+                                                existing_player = next((p for p in player_service.get_all_players() if p.name == name), None)
+                                                if existing_player and not existing_player.is_participating_today:
+                                                    added_players.append(existing_player)
+                                        else:
+                                            error_count += 1
+                                            errors.append(f"{name}: {str(e)}")
+                            
+                            # 自動参加機能
+                            if auto_participate and added_players:
+                                for player in added_players:
+                                    player_service.set_participation_status(player.id, True)
+                                # 番号を自動割り振り
+                                player_service.assign_player_numbers()
+                            
+                            # 結果表示
+                            if success_count > 0:
+                                if auto_participate:
+                                    st.success(f"✅ {success_count}人のプレイヤーを追加し、参加者に設定しました！")
+                                else:
+                                    st.success(f"✅ {success_count}人のプレイヤーを追加しました！")
+                            if duplicate_count > 0:
+                                if auto_participate:
+                                    st.warning(f"⚠️ {duplicate_count}人は既に登録済みでしたが、参加者に設定しました")
+                                else:
+                                    st.warning(f"⚠️ {duplicate_count}人は既に登録済みでした")
+                            if error_count > 0:
+                                st.error(f"❌ {error_count}人の登録に失敗しました")
+                                for error in errors:
+                                    st.error(f"  • {error}")
+                            
+                            if success_count > 0 or (auto_participate and duplicate_count > 0):
+                                st.rerun()
+                
+                except json.JSONDecodeError as e:
+                    st.error(f"❌ JSON形式が正しくありません: {str(e)}")
                 except Exception as e:
                     st.error(f"❌ エラーが発生しました: {str(e)}")
+            else:
+                st.error("❌ JSONデータを入力してください")
     
     st.divider()
     
-    # ユーザー一覧セクション
-    st.header("📋 ユーザー一覧")
+    # 既存プレイヤーの管理
+    st.subheader("登録プレイヤー一覧")
+    players = player_service.get_all_players()
     
-    if st.session_state.players:
-        # 検索機能
-        search_term = st.text_input("🔍 ユーザー検索", placeholder="ユーザー名で検索...")
-        
-        # 統計情報
-        summary_stats = player_service.get_summary_stats()
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("総ユーザー数", summary_stats['total_players'])
-        with col2:
-            st.metric("参加可能", summary_stats['active_players'])
-        with col3:
-            st.metric("休憩中", summary_stats['total_players'] - summary_stats['active_players'])
-        with col4:
-            st.metric("完了試合", summary_stats['completed_matches'])
-        
-        # ユーザー一覧テーブル（検索フィルター適用）
-        users_data = []
-        filtered_count = 0
-        
-        for name, player in st.session_state.players.items():
-            # 検索フィルター
-            if search_term and search_term.lower() not in name.lower():
-                continue
-                
-            filtered_count += 1
-            users_data.append({
-                "ユーザー名": name,
-                "レベル": player.level,
-                "試合数": player.matches_played,
-                "勝数": player.wins,
-                "勝率": f"{player.win_rate:.1%}",
-                "得失点比": f"{player.point_ratio:.2f}",
-                "ステータス": "🟢 参加中" if not player.is_resting else "🔴 休憩中"
-            })
-        
-        # 検索結果の表示
-        if search_term:
-            st.info(f"🔍 検索結果: {filtered_count}人 / 総ユーザー数: {summary_stats['total_players']}人")
-        
-        df_users = pd.DataFrame(users_data)
-        st.dataframe(df_users, use_container_width=True, hide_index=True)
-        
-        # ユーザー編集セクション
-        st.subheader("✏️ ユーザー編集")
-        
-        # ユーザー選択（検索フィルター適用）
-        if search_term:
-            # 検索結果からユーザー名を取得
-            filtered_user_names = [name for name in st.session_state.players.keys() 
-                                 if search_term.lower() in name.lower()]
-            if filtered_user_names:
-                user_names = filtered_user_names
-                st.info(f"🔍 検索結果から{len(user_names)}人を選択可能")
-            else:
-                user_names = list(st.session_state.players.keys())
-                st.warning("🔍 検索結果がありません。全ユーザーを表示します。")
-        else:
-            user_names = list(st.session_state.players.keys())
-        
-        selected_user = st.selectbox("編集するユーザーを選択", user_names)
-        
-        if selected_user:
-            player = st.session_state.players[selected_user]
-            
-            col1, col2, col3, col4 = st.columns(4)
+    if not players:
+        st.info("まだプレイヤーが登録されていません。上記のフォームから追加してください。")
+        return
+    
+    # プレイヤー一覧をカード形式で表示
+    for player in players:
+        with st.container():
+            col1, col2, col3 = st.columns([3, 1, 1])
             
             with col1:
-                st.write(f"**選択中:** {selected_user}")
+                st.write(f"**{player.name}**")
+                st.caption(f"スキルレベル: {player.level} | スキルポイント: {player.skill_points:.1f}")
             
             with col2:
-                new_level = st.selectbox(
-                    "レベル",
-                    options=[1, 2, 3, 4, 5],
-                    index=player.level - 1,
-                    key="edit_level"
-                )
-                if new_level != player.level:
-                    player_service.update_player_level(selected_user, new_level)
-                    st.success(f"レベルを{new_level}に更新しました")
+                if player.is_participating_today:
+                    st.success("参加中")
+                else:
+                    st.info("不参加")
             
             with col3:
-                status = "参加中" if not player.is_resting else "休憩中"
-                st.write(f"**現在のステータス:** {status}")
-                
-                if st.button(
-                    "参加" if player.is_resting else "休憩",
-                    key="edit_status",
-                    type="primary" if not player.is_resting else "secondary"
-                ):
-                    player_service.toggle_rest_status(selected_user)
-                    st.rerun()
-            
-            with col4:
-                if st.button("🗑️ 削除", key="delete_user", type="secondary"):
-                    player_service.remove_player(selected_user)
-                    st.success(f"✅ {selected_user}を削除しました")
-                    st.rerun()
+                if st.button("🗑️ 削除", key=f"delete_{player.id}"):
+                    if player_service.delete_player(player.id):
+                        st.success(f"プレイヤー「{player.name}」を削除しました")
+                        st.rerun()
+                    else:
+                        st.error("削除に失敗しました")
+        
+        st.divider()
     
-    else:
-        st.info("ユーザーが登録されていません。上記でユーザーを追加してください。")
+    # 便利機能
+    st.subheader("🛠️ 便利機能")
+    col_export, col_clear = st.columns(2)
+    
+    with col_export:
+        if st.button("📤 JSON形式でエクスポート", use_container_width=True):
+            if players:
+                export_data = {
+                    "Name": [p.name for p in players]
+                }
+                import json
+                json_str = json.dumps(export_data, ensure_ascii=False, indent=2)
+                st.text_area("エクスポートされたJSON", json_str, height=200)
+                st.success("✅ プレイヤー情報をJSONでエクスポートしました")
+            else:
+                st.info("エクスポートするプレイヤーがいません")
+    
+    with col_clear:
+        if st.button("🗑️ 全プレイヤー削除", use_container_width=True):
+            st.session_state["confirm_delete_all_players"] = True
+            st.rerun()
+    
+    # 全削除確認ダイアログ
+    if st.session_state.get("confirm_delete_all_players", False):
+        st.warning("⚠️ **全プレイヤー削除確認**")
+        st.write("すべてのプレイヤーを削除しますか？この操作は取り消せません。")
+        
+        col_confirm, col_cancel = st.columns(2)
+        with col_confirm:
+            if st.button("🗑️ 全削除実行", key="confirm_delete_all", use_container_width=True):
+                try:
+                    for player in players:
+                        player_service.delete_player(player.id)
+                    st.session_state["confirm_delete_all_players"] = False
+                    st.success("✅ 全プレイヤーを削除しました")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ 削除に失敗しました: {e}")
+        
+        with col_cancel:
+            if st.button("❌ キャンセル", key="cancel_delete_all", use_container_width=True):
+                st.session_state["confirm_delete_all_players"] = False
+                st.rerun()
+    
+    st.divider()
+    
+    # 統計情報
+    st.subheader("📊 統計情報")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("登録プレイヤー数", len(players))
+    
+    with col2:
+        participating_count = len([p for p in players if p.is_participating_today])
+        st.metric("本日参加予定", participating_count)
+    
+    with col3:
+        avg_skill = sum(p.skill_points for p in players) / len(players) if players else 0
+        st.metric("平均スキルポイント", f"{avg_skill:.1f}")
 
 if __name__ == "__main__":
-    main() 
+    show_user_management() 

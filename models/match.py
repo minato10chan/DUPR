@@ -1,57 +1,54 @@
-from typing import List, Dict, Any, Optional
+from pydantic import BaseModel
+from typing import List, Optional
+from datetime import datetime
+import uuid
 
-class Match:
-    def __init__(self, team1: List[str], team2: List[str], court: int, match_index: Optional[int] = None):
-        self.team1 = team1
-        self.team2 = team2
-        self.court = court
-        self.team1_score = 0
-        self.team2_score = 0
-        self.is_completed = False
-        self.match_index = match_index if match_index is not None else 0
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """辞書形式に変換"""
-        return {
-            'team1': self.team1,
-            'team2': self.team2,
-            'court': self.court,
-            'team1_score': self.team1_score,
-            'team2_score': self.team2_score,
-            'is_completed': self.is_completed,
-            'match_index': self.match_index
-        }
-    
+class Match(BaseModel):
+    id: str
+    match_index: int
+    court_number: int
+    team1_player_ids: List[str]
+    team2_player_ids: List[str]
+    team1_score: int = 0
+    team2_score: int = 0
+    is_completed: bool = False
+    completed_at: Optional[str] = None
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Match':
-        """辞書から復元"""
-        match = cls(data['team1'], data['team2'], data['court'])
-        match.team1_score = data['team1_score']
-        match.team2_score = data['team2_score']
-        match.is_completed = data['is_completed']
-        match.match_index = data['match_index']
-        return match
-    
-    def complete(self, team1_score: int, team2_score: int) -> None:
-        """試合を完了"""
+    def create_new(cls, match_index: int, court_number: int, 
+                   team1_player_ids: List[str], team2_player_ids: List[str]) -> "Match":
+        """新しい試合を作成"""
+        return cls(
+            id=str(uuid.uuid4()),
+            match_index=match_index,
+            court_number=court_number,
+            team1_player_ids=team1_player_ids,
+            team2_player_ids=team2_player_ids
+        )
+
+    def complete_match(self, team1_score: int, team2_score: int):
+        """試合を完了する"""
         self.team1_score = team1_score
         self.team2_score = team2_score
         self.is_completed = True
-    
+        self.completed_at = datetime.now().isoformat()
+
     @property
-    def winner(self) -> List[str]:
-        """勝者チームを取得"""
-        return self.team1 if self.team1_score > self.team2_score else self.team2
-    
-    @property
-    def loser(self) -> List[str]:
-        """敗者チームを取得"""
-        return self.team2 if self.team1_score > self.team2_score else self.team1
-    
-    def get_team_score(self, team: List[str]) -> int:
-        """指定チームのスコアを取得"""
-        if team == self.team1:
-            return self.team1_score
-        elif team == self.team2:
-            return self.team2_score
-        return 0 
+    def winner_team(self) -> Optional[int]:
+        """勝利チームを返す（1 or 2、引き分けの場合はNone）"""
+        if not self.is_completed:
+            return None
+        if self.team1_score > self.team2_score:
+            return 1
+        elif self.team2_score > self.team1_score:
+            return 2
+        return None
+
+    def to_dict(self) -> dict:
+        """辞書形式に変換"""
+        return self.model_dump()
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Match":
+        """辞書から作成"""
+        return cls(**data) 

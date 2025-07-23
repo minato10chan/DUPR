@@ -1,73 +1,126 @@
 import json
 import os
-import streamlit as st
-from datetime import datetime
-from typing import Dict, List, Tuple
-from models.player import Player
-from models.match import Match
-from config.settings import DATA_FILE
+import tempfile
+import shutil
+from typing import Dict, Any
+from config.settings import DATA_FILE_PATH
 
-def load_data() -> Tuple[Dict[str, Player], List[Match]]:
-    """データをファイルから読み込み"""
-    if os.path.exists(DATA_FILE):
+class DataManager:
+    @staticmethod
+    def load_data() -> Dict[str, Any]:
+        """データファイルを読み込む。ファイルが存在しない場合は空のデータ構造を返す"""
         try:
-            with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+            # ディレクトリが存在しない場合は作成
+            data_dir = os.path.dirname(DATA_FILE_PATH)
+            if data_dir:  # パスにディレクトリが含まれている場合のみ
+                os.makedirs(data_dir, exist_ok=True)
+            
+            if os.path.exists(DATA_FILE_PATH):
+                with open(DATA_FILE_PATH, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    # データ構造の検証
+                    if not isinstance(data, dict):
+                        raise ValueError("データファイルの形式が正しくありません")
+                    return data
+            else:
+                print(f"データファイルが見つかりません。新しいファイルを作成します: {DATA_FILE_PATH}")
+                # 初期データ構造を作成して保存
+                initial_data = {
+                    "players": [],
+                    "matches": [],
+                    "session_data": {
+                        "current_match_index": 0,
+                        "participating_players": []
+                    }
+                }
+                DataManager.save_data(initial_data)
+                return initial_data
                 
-            # プレイヤーデータの復元
-            players = {}
-            for name, player_data in data.get('players', {}).items():
-                players[name] = Player.from_dict(player_data)
-            
-            # マッチデータの復元
-            matches = []
-            for match_data in data.get('matches', []):
-                matches.append(Match.from_dict(match_data))
-            
-            return players, matches
+        except (json.JSONDecodeError, FileNotFoundError, PermissionError, OSError) as e:
+            print(f"データファイルの読み込みに失敗しました: {e}")
+            print(f"ファイルパス: {DATA_FILE_PATH}")
+            # エラーが発生した場合も初期データ構造を返す
+            return {
+                "players": [],
+                "matches": [],
+                "session_data": {
+                    "current_match_index": 0,
+                    "participating_players": []
+                }
+            }
         except Exception as e:
-            st.error(f"データ読み込みエラー: {e}")
-            return {}, []
-    return {}, []
+            print(f"予期しないエラーが発生しました: {e}")
+            # 予期しないエラーでも初期データ構造を返す
+            return {
+                "players": [],
+                "matches": [],
+                "session_data": {
+                    "current_match_index": 0,
+                    "participating_players": []
+                }
+            }
 
-def save_data(players: Dict[str, Player], matches: List[Match]) -> None:
-    """データをファイルに保存"""
-    try:
-        # プレイヤーデータを辞書形式に変換
-        players_data = {}
-        for name, player in players.items():
-            players_data[name] = player.to_dict()
-        
-        # マッチデータを辞書形式に変換
-        matches_data = []
-        for match in matches:
-            matches_data.append(match.to_dict())
-        
-        # データを保存
-        data = {
-            'players': players_data,
-            'matches': matches_data,
-            'last_updated': datetime.now().isoformat()
-        }
-        
-        with open(DATA_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+    @staticmethod
+    def save_data(data: Dict[str, Any]) -> bool:
+        """データをJSONファイルに保存する。アトミックな書き込みを実行"""
+        try:
+            # ディレクトリが存在しない場合は作成
+            data_dir = os.path.dirname(DATA_FILE_PATH)
+            if data_dir:  # パスにディレクトリが含まれている場合のみ
+                os.makedirs(data_dir, exist_ok=True)
             
-    except Exception as e:
-        st.error(f"データ保存エラー: {e}")
+            # 一時ファイルに書き込み
+            temp_dir = data_dir if data_dir else '.'
+            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', 
+                                           dir=temp_dir, 
+                                           delete=False) as temp_file:
+                json.dump(data, temp_file, ensure_ascii=False, indent=2)
+                temp_filename = temp_file.name
+            
+            # バックアップを作成（既存ファイルがある場合）
+            if os.path.exists(DATA_FILE_PATH):
+                backup_file = DATA_FILE_PATH + ".backup"
+                try:
+                    shutil.copy2(DATA_FILE_PATH, backup_file)
+                except Exception as backup_error:
+                    print(f"バックアップ作成に失敗: {backup_error}")
+            
+            # 一時ファイルを本ファイルに移動（アトミック操作）
+            shutil.move(temp_filename, DATA_FILE_PATH)
+            print(f"データを正常に保存しました: {DATA_FILE_PATH}")
+            return True
+            
+        except (PermissionError, OSError, IOError) as e:
+            print(f"データの保存に失敗しました (ファイルシステムエラー): {e}")
+            print(f"ファイルパス: {DATA_FILE_PATH}")
+            # 一時ファイルを削除（もし存在すれば）
+            try:
+                if 'temp_filename' in locals() and os.path.exists(temp_filename):
+                    os.unlink(temp_filename)
+            except:
+                pass
+            return False
+            
+        except Exception as e:
+            print(f"データの保存に失敗しました (予期しないエラー): {e}")
+            print(f"ファイルパス: {DATA_FILE_PATH}")
+            # 一時ファイルを削除（もし存在すれば）
+            try:
+                if 'temp_filename' in locals() and os.path.exists(temp_filename):
+                    os.unlink(temp_filename)
+            except:
+                pass
+            return False
 
-
-
-def get_data_file_info() -> Dict[str, any]:
-    """データファイルの情報を取得"""
-    if os.path.exists(DATA_FILE):
-        return {
-            'exists': True,
-            'size': os.path.getsize(DATA_FILE),
-            'modified': datetime.fromtimestamp(os.path.getmtime(DATA_FILE))
-        }
-    return {
-        'exists': False,
-        'size': 0,
-        'modified': None
-    } 
+    @staticmethod
+    def backup_data() -> bool:
+        """現在のデータファイルのバックアップを作成"""
+        try:
+            if os.path.exists(DATA_FILE_PATH):
+                backup_file = DATA_FILE_PATH + ".backup"
+                shutil.copy2(DATA_FILE_PATH, backup_file)
+                return True
+            return False
+        except Exception as e:
+            print(f"バックアップの作成に失敗しました: {e}")
+            return False 

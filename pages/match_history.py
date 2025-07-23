@@ -1,236 +1,323 @@
 import streamlit as st
-import pandas as pd
-from models.player import Player
-from models.match import Match
-from services.player_service import PlayerService
 from services.match_service import MatchService
-from utils.data_manager import load_data, save_data
-from config.settings import APP_TITLE
+from services.player_service import PlayerService
+import pandas as pd
 
-# ページ設定
-st.set_page_config(
-    page_title="試合履歴管理 - " + APP_TITLE,
-    page_icon="📜",
-    layout="wide"
-)
-
-# セッション状態の初期化
-if 'players' not in st.session_state:
-    st.session_state.players = {}
-if 'matches' not in st.session_state:
-    st.session_state.matches = []
-
-# データ読み込み
-if not st.session_state.players and not st.session_state.matches:
-    loaded_players, loaded_matches = load_data()
-    if loaded_players:
-        st.session_state.players = loaded_players
-    if loaded_matches:
-        st.session_state.matches = loaded_matches
-
-# サービスインスタンスの初期化
-player_service = PlayerService(st.session_state.players, st.session_state.matches)
-match_service = MatchService(st.session_state.players, st.session_state.matches)
-
-def main():
-    st.title("📜 試合履歴管理")
-    st.markdown("完了した試合の履歴を確認、編集、削除できます。")
+def show_match_history():
+    """試合履歴ページを表示"""
+    st.title("📋 試合履歴")
     
-    # メインページへのリンク
-    if st.button("🏠 メインページに戻る", type="secondary", use_container_width=True):
-        st.switch_page("app.py")
+    match_service = MatchService()
+    player_service = PlayerService()
     
-    st.divider()
+    # 試合履歴を取得
+    matches = match_service.get_all_matches()
+    players = player_service.get_all_players()
     
-    # 試合履歴セクション
-    st.header("📋 試合履歴一覧")
+    if not matches:
+        st.info("まだ試合履歴がありません。")
+        return
     
-    # 完了した試合のみを取得
-    completed_matches = [match for match in st.session_state.matches if match.is_completed]
+    # プレイヤー名のマッピングを作成
+    player_name_map = {p.id: p.name for p in players}
     
+    # 完了済み試合のみを表示
+    completed_matches = [m for m in matches if m.is_completed]
+    
+    if not completed_matches:
+        st.info("完了した試合がまだありません。")
+        return
+    
+    # 試合履歴をテーブル形式で表示
+    st.subheader("完了済み試合")
+    
+    # データフレーム用のデータを準備
+    history_data = []
+    for match in completed_matches:
+        team1_names = [player_name_map.get(pid, "不明") for pid in match.team1_player_ids]
+        team2_names = [player_name_map.get(pid, "不明") for pid in match.team2_player_ids]
+        
+        history_data.append({
+            "試合": f"第{match.match_index}試合",
+            "コート": f"コート{match.court_number}",
+            "チーム1": " & ".join(team1_names),
+            "スコア": f"{match.team1_score} - {match.team2_score}",
+            "チーム2": " & ".join(team2_names),
+            "勝者": "チーム1" if match.winner_team == 1 else "チーム2" if match.winner_team == 2 else "引き分け",
+            "完了日時": match.completed_at[:16] if match.completed_at else "不明"
+        })
+    
+    # データフレームを作成して表示
+    df = pd.DataFrame(history_data)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+    
+    # 試合詳細と編集機能
+    st.subheader("📝 試合詳細・編集")
+    
+    # 試合選択
     if completed_matches:
-        # 統計情報
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("総試合数", len(completed_matches))
-        with col2:
-            total_players = len(st.session_state.players)
-            st.metric("登録ユーザー数", total_players)
-        with col3:
-            avg_matches = sum(player.matches_played for player in st.session_state.players.values()) / max(total_players, 1)
-            st.metric("平均試合数", f"{avg_matches:.1}")
-        with col4:
-            total_points = sum(match.team1_score + match.team2_score for match in completed_matches)
-            st.metric("総得点数", total_points)
+        selected_match_index = st.selectbox(
+            "編集する試合を選択",
+            options=[m.match_index for m in completed_matches],
+            format_func=lambda x: f"第{x}試合"
+        )
         
-        # 検索機能
-        search_term = st.text_input("🔍 試合検索", placeholder="プレイヤー名で検索...")
+        selected_match = next(m for m in completed_matches if m.match_index == selected_match_index)
         
-        # 試合履歴テーブル
-        history_data = []
-        filtered_count = 0
-        
-        for i, match in enumerate(completed_matches):
-            # 検索フィルター
-            all_players = match.team1 + match.team2
-            if search_term and not any(search_term.lower() in player.lower() for player in all_players):
-                continue
+        if selected_match:
+            # 試合詳細表示
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**試合情報**")
+                st.write(f"試合番号: 第{selected_match.match_index}試合")
+                st.write(f"コート: コート{selected_match.court_number}")
+                st.write(f"完了日時: {selected_match.completed_at[:16] if selected_match.completed_at else '不明'}")
                 
-            filtered_count += 1
-            history_data.append({
-                "試合ID": i,
-                "コート": match.court,
-                "チーム1": ', '.join(match.team1),
-                "チーム2": ', '.join(match.team2),
-                "スコア": f"{match.team1_score} - {match.team2_score}",
-                "勝者": ', '.join(match.winner),
-                "試合日時": match.completed_at.strftime("%Y-%m-%d %H:%M") if hasattr(match, 'completed_at') and match.completed_at else "不明"
+                winner = "チーム1" if selected_match.winner_team == 1 else "チーム2" if selected_match.winner_team == 2 else "引き分け"
+                st.write(f"勝者: {winner}")
+            
+            with col2:
+                st.write("**チーム構成**")
+                team1_names = [player_name_map.get(pid, "不明") for pid in selected_match.team1_player_ids]
+                team2_names = [player_name_map.get(pid, "不明") for pid in selected_match.team2_player_ids]
+                
+                st.write("🔵 **チーム1**")
+                for name in team1_names:
+                    st.write(f"  • {name}")
+                
+                st.write("🔴 **チーム2**")
+                for name in team2_names:
+                    st.write(f"  • {name}")
+            
+            st.divider()
+            
+            # 編集・削除ボタン
+            col_edit, col_delete, col_view = st.columns(3)
+            
+            with col_edit:
+                if st.button("✏️ スコアを編集", use_container_width=True, type="primary"):
+                    st.session_state["editing_match_history"] = selected_match.id
+                    st.rerun()
+            
+            with col_delete:
+                if st.button("🗑️ 試合を削除", use_container_width=True, type="secondary"):
+                    st.session_state["deleting_match_history"] = selected_match.id
+                    st.rerun()
+            
+            with col_view:
+                if st.button("👁️ 詳細表示", use_container_width=True):
+                    st.session_state["viewing_match_details"] = selected_match.id
+                    st.rerun()
+            
+            # 編集モード
+            if st.session_state.get("editing_match_history") == selected_match.id:
+                show_match_history_edit_form(selected_match, player_service, match_service)
+            
+            # 削除確認
+            if st.session_state.get("deleting_match_history") == selected_match.id:
+                show_match_history_delete_confirmation(selected_match, player_service, match_service)
+            
+            # 詳細表示
+            if st.session_state.get("viewing_match_details") == selected_match.id:
+                show_match_history_details(selected_match, player_service)
+    
+    # 統計情報
+    st.subheader("📊 試合統計")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("総試合数", len(completed_matches))
+    
+    with col2:
+        total_points = sum(m.team1_score + m.team2_score for m in completed_matches)
+        avg_points = total_points / len(completed_matches) if completed_matches else 0
+        st.metric("平均総得点", f"{avg_points:.1f}")
+    
+    with col3:
+        # 各コートの使用回数
+        court_usage = {}
+        for match in completed_matches:
+            court_usage[match.court_number] = court_usage.get(match.court_number, 0) + 1
+        most_used_court = max(court_usage.keys()) if court_usage else 1
+        st.metric("最多使用コート", f"コート{most_used_court}")
+
+    # 詳細な個人成績は別のセクションで表示
+    st.subheader("👤 個人成績サマリー")
+    
+    # 参加プレイヤーの成績を計算
+    player_stats = {}
+    for match in completed_matches:
+        for player_id in match.team1_player_ids + match.team2_player_ids:
+            if player_id not in player_stats:
+                player_stats[player_id] = {
+                    "name": player_name_map.get(player_id, "不明"),
+                    "matches": 0,
+                    "wins": 0,
+                    "points_scored": 0,
+                    "points_conceded": 0
+                }
+            
+            player_stats[player_id]["matches"] += 1
+            
+            # 勝敗の記録
+            if match.winner_team == 1 and player_id in match.team1_player_ids:
+                player_stats[player_id]["wins"] += 1
+                player_stats[player_id]["points_scored"] += match.team1_score
+                player_stats[player_id]["points_conceded"] += match.team2_score
+            elif match.winner_team == 2 and player_id in match.team2_player_ids:
+                player_stats[player_id]["wins"] += 1
+                player_stats[player_id]["points_scored"] += match.team2_score
+                player_stats[player_id]["points_conceded"] += match.team1_score
+            else:
+                # 負けた場合
+                if player_id in match.team1_player_ids:
+                    player_stats[player_id]["points_scored"] += match.team1_score
+                    player_stats[player_id]["points_conceded"] += match.team2_score
+                else:
+                    player_stats[player_id]["points_scored"] += match.team2_score
+                    player_stats[player_id]["points_conceded"] += match.team1_score
+    
+    # 成績データフレームを作成
+    if player_stats:
+        stats_data = []
+        for player_id, stats in player_stats.items():
+            win_rate = (stats["wins"] / stats["matches"]) * 100 if stats["matches"] > 0 else 0
+            avg_scored = stats["points_scored"] / stats["matches"] if stats["matches"] > 0 else 0
+            avg_conceded = stats["points_conceded"] / stats["matches"] if stats["matches"] > 0 else 0
+            
+            stats_data.append({
+                "プレイヤー": stats["name"],
+                "試合数": stats["matches"],
+                "勝数": stats["wins"],
+                "勝率": f"{win_rate:.1f}%",
+                "平均得点": f"{avg_scored:.1f}",
+                "平均失点": f"{avg_conceded:.1f}"
             })
         
-        # 検索結果の表示
-        if search_term:
-            st.info(f"🔍 検索結果: {filtered_count}試合 / 総試合数: {len(completed_matches)}試合")
-        
-        df_history = pd.DataFrame(history_data)
-        st.dataframe(df_history, use_container_width=True, hide_index=True)
-        
-        # 試合編集セクション
-        st.subheader("✏️ 試合編集")
-        
-        # 試合選択（検索フィルター適用）
-        if search_term:
-            filtered_match_indices = [i for i, match in enumerate(completed_matches) 
-                                    if any(search_term.lower() in player.lower() 
-                                          for player in match.team1 + match.team2)]
-            if filtered_match_indices:
-                match_indices = filtered_match_indices
-                st.info(f"🔍 検索結果から{len(match_indices)}試合を選択可能")
-            else:
-                match_indices = list(range(len(completed_matches)))
-                st.warning("🔍 検索結果がありません。全試合を表示します。")
-        else:
-            match_indices = list(range(len(completed_matches)))
-        
-        if match_indices:
-            selected_match_index = st.selectbox(
-                "編集する試合を選択", 
-                match_indices,
-                format_func=lambda x: f"試合{x+1}: {completed_matches[x].team1_score}-{completed_matches[x].team2_score} ({', '.join(completed_matches[x].team1)} vs {', '.join(completed_matches[x].team2)})"
+        stats_df = pd.DataFrame(stats_data)
+        # 勝率でソート
+        stats_df = stats_df.sort_values("勝率", ascending=False)
+        st.dataframe(stats_df, use_container_width=True, hide_index=True)
+
+def show_match_history_edit_form(match, player_service, match_service):
+    """試合履歴の編集フォーム"""
+    st.divider()
+    st.markdown("### ✏️ 試合結果を編集")
+    
+    # プレイヤー名の取得
+    all_players = player_service.get_all_players()
+    player_name_map = {p.id: p.name for p in all_players}
+    
+    team1_names = [player_name_map.get(pid, "不明") for pid in match.team1_player_ids]
+    team2_names = [player_name_map.get(pid, "不明") for pid in match.team2_player_ids]
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 🔵 チーム1")
+        st.write(" & ".join(team1_names))
+        team1_score = st.number_input("スコア編集用", min_value=0, max_value=50, value=match.team1_score, key=f"history_team1_{match.id}", label_visibility="collapsed")
+    
+    with col2:
+        st.markdown("#### 🔴 チーム2")
+        st.write(" & ".join(team2_names))
+        team2_score = st.number_input("スコア編集用", min_value=0, max_value=50, value=match.team2_score, key=f"history_team2_{match.id}", label_visibility="collapsed")
+    
+    # 操作ボタン
+    col_save, col_cancel = st.columns(2)
+    
+    with col_save:
+        if st.button("💾 保存", key=f"history_save_{match.id}", use_container_width=True, type="primary"):
+            # 既存の結果を削除（スキルポイントを元に戻す）
+            match_service.revert_match_result(match, all_players)
+            
+            # 新しい結果を記録
+            success = match_service.record_match_result(
+                match.id, team1_score, team2_score, all_players
             )
             
-            if selected_match_index is not None:
-                selected_match = completed_matches[selected_match_index]
+            if success:
+                # プレイヤー情報も更新
+                for player in all_players:
+                    player_service.update_player(player)
                 
-                st.markdown(f"**選択中の試合:** コート{selected_match.court}")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.write(f"**チーム1:** {', '.join(selected_match.team1)}")
-                    new_team1_score = st.number_input(
-                        "チーム1得点", 
-                        min_value=0, 
-                        value=selected_match.team1_score,
-                        key="edit_team1_score"
-                    )
-                
-                with col2:
-                    st.write(f"**チーム2:** {', '.join(selected_match.team2)}")
-                    new_team2_score = st.number_input(
-                        "チーム2得点", 
-                        min_value=0, 
-                        value=selected_match.team2_score,
-                        key="edit_team2_score"
-                    )
-                
-                # 編集・削除ボタン
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    if st.button("💾 更新", type="primary", use_container_width=True):
-                        # 古い結果を元に戻す
-                        old_team1_score = selected_match.team1_score
-                        old_team2_score = selected_match.team2_score
-                        old_winner = selected_match.winner
-                        
-                        # プレイヤーの統計を元に戻す
-                        for player_name in selected_match.team1:
-                            player = st.session_state.players[player_name]
-                            player.matches_played -= 1
-                            player.total_points_scored -= old_team1_score
-                            player.total_points_conceded -= old_team2_score
-                            if player_name in old_winner:
-                                player.wins -= 1
-                        
-                        for player_name in selected_match.team2:
-                            player = st.session_state.players[player_name]
-                            player.matches_played -= 1
-                            player.total_points_scored -= old_team2_score
-                            player.total_points_conceded -= old_team1_score
-                            if player_name in old_winner:
-                                player.wins -= 1
-                        
-                        # 新しい結果を適用
-                        selected_match.team1_score = new_team1_score
-                        selected_match.team2_score = new_team2_score
-                        selected_match.winner = selected_match.team1 if new_team1_score > new_team2_score else selected_match.team2
-                        
-                        # プレイヤーの統計を更新
-                        for player_name in selected_match.team1:
-                            player = st.session_state.players[player_name]
-                            player.matches_played += 1
-                            player.total_points_scored += new_team1_score
-                            player.total_points_conceded += new_team2_score
-                            if player_name in selected_match.winner:
-                                player.wins += 1
-                        
-                        for player_name in selected_match.team2:
-                            player = st.session_state.players[player_name]
-                            player.matches_played += 1
-                            player.total_points_scored += new_team2_score
-                            player.total_points_conceded += new_team1_score
-                            if player_name in selected_match.winner:
-                                player.wins += 1
-                        
-                        # データを保存
-                        save_data(st.session_state.players, st.session_state.matches)
-                        st.success("✅ 試合結果を更新しました")
-                        st.rerun()
-                
-                with col2:
-                    if st.button("🗑️ 削除", type="secondary", use_container_width=True):
-                        # プレイヤーの統計を元に戻す
-                        for player_name in selected_match.team1:
-                            player = st.session_state.players[player_name]
-                            player.matches_played -= 1
-                            player.total_points_scored -= selected_match.team1_score
-                            player.total_points_conceded -= selected_match.team2_score
-                            if player_name in selected_match.winner:
-                                player.wins -= 1
-                        
-                        for player_name in selected_match.team2:
-                            player = st.session_state.players[player_name]
-                            player.matches_played -= 1
-                            player.total_points_scored -= selected_match.team2_score
-                            player.total_points_conceded -= selected_match.team1_score
-                            if player_name in selected_match.winner:
-                                player.wins -= 1
-                        
-                        # 試合を削除
-                        st.session_state.matches.remove(selected_match)
-                        
-                        # データを保存
-                        save_data(st.session_state.players, st.session_state.matches)
-                        st.success("✅ 試合を削除しました")
-                        st.rerun()
+                # 編集モードを終了
+                st.session_state["editing_match_history"] = None
+                st.success("試合結果を更新しました！")
+                st.rerun()
+            else:
+                st.error("更新に失敗しました")
     
-    else:
-        st.info("完了した試合がありません。")
-        
-        # 現在進行中の試合があるかチェック
-        current_matches = [match for match in st.session_state.matches if not match.is_completed]
-        if current_matches:
-            st.warning(f"⚠️ 現在{len(current_matches)}試合が進行中です。試合を完了させると履歴に表示されます。")
+    with col_cancel:
+        if st.button("❌ キャンセル", key=f"history_cancel_{match.id}", use_container_width=True):
+            st.session_state["editing_match_history"] = None
+            st.rerun()
+
+def show_match_history_delete_confirmation(match, player_service, match_service):
+    """試合履歴の削除確認"""
+    st.divider()
+    st.warning("⚠️ **試合結果の削除**")
+    st.write(f"第{match.match_index}試合の結果を削除しますか？")
+    st.write(f"**スコア**: {match.team1_score} - {match.team2_score}")
+    
+    col_confirm, col_cancel = st.columns(2)
+    
+    with col_confirm:
+        if st.button("🗑️ 削除する", key=f"history_confirm_delete_{match.id}", use_container_width=True, type="primary"):
+            all_players = player_service.get_all_players()
+            
+            # スキルポイントを元に戻す
+            match_service.revert_match_result(match, all_players)
+            
+            # 試合を未完了状態に戻す
+            match.team1_score = 0
+            match.team2_score = 0
+            match.is_completed = False
+            match.completed_at = None
+            
+            # 保存
+            if match_service.save_match(match):
+                # プレイヤー情報も更新
+                for player in all_players:
+                    player_service.update_player(player)
+                
+                st.session_state["deleting_match_history"] = None
+                st.success("試合結果を削除しました！")
+                st.rerun()
+            else:
+                st.error("削除に失敗しました")
+    
+    with col_cancel:
+        if st.button("❌ キャンセル", key=f"history_cancel_delete_{match.id}", use_container_width=True):
+            st.session_state["deleting_match_history"] = None
+            st.rerun()
+
+def show_match_history_details(match, player_service):
+    """試合履歴の詳細表示"""
+    st.divider()
+    st.write("**👁️ 試合詳細**")
+    
+    all_players = player_service.get_all_players()
+    player_name_map = {p.id: p.name for p in all_players}
+    
+    # チーム1の詳細
+    st.write("🔵 **チーム1**")
+    team1_players = [p for p in all_players if p.id in match.team1_player_ids]
+    for player in team1_players:
+        st.write(f"  • {player.name} (Lv.{player.level}, SP: {player.skill_points:.0f})")
+    
+    st.write("🔴 **チーム2**")
+    team2_players = [p for p in all_players if p.id in match.team2_player_ids]
+    for player in team2_players:
+        st.write(f"  • {player.name} (Lv.{player.level}, SP: {player.skill_points:.0f})")
+    
+    # スコア詳細
+    st.write(f"**スコア**: {match.team1_score} - {match.team2_score}")
+    
+    if st.button("❌ 閉じる", key=f"close_details_{match.id}"):
+        st.session_state["viewing_match_details"] = None
+        st.rerun()
 
 if __name__ == "__main__":
-    main() 
+    show_match_history() 
